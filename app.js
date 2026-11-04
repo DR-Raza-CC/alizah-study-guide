@@ -1,7 +1,20 @@
 /* Alizah Study Guide — student and parent app. Content lives in data.js. */
 const SUBJECTS = window.SUBJECTS;
 const SUB = Object.fromEntries(SUBJECTS.map((s) => [s.id, s]));
-const WEEKS_N = 4, TOPIC_QS = 10;
+const TOPIC_QS = 10;
+/* Whitmore High School follows Harrow's 2026–27 term dates. Each guide is tagged with the half-term it belongs to. */
+const HALF_TERMS = [
+  { id: "Aut1", name: "Autumn 1", start: "2026-09-02" },
+  { id: "Aut2", name: "Autumn 2", start: "2026-11-02" },
+  { id: "Spr1", name: "Spring 1", start: "2027-01-04" },
+  { id: "Spr2", name: "Spring 2", start: "2027-02-22" },
+  { id: "Sum1", name: "Summer 1", start: "2027-04-12" },
+  { id: "Sum2", name: "Summer 2", start: "2027-06-07" },
+];
+const HT_INDEX = Object.fromEntries(HALF_TERMS.map((h, i) => [h.id, i]));
+const htOf = (s, w) => HT_INDEX[SUB[s].weeks[w].ht] ?? w;
+const htName = (s, w) => HALF_TERMS[htOf(s, w)]?.name || "Topic " + (w + 1);
+const topicsIn = (s) => SUB[s].weeks.length;
 
 /* ---------- small helpers ---------- */
 const $ = (id) => document.getElementById(id);
@@ -32,13 +45,20 @@ function ago(ts) {
 }
 
 /* ---------- progress maths (work on any child's progress object) ---------- */
-const blankProgress = () => ({ subs: [], start: null, profileAt: 0, done: {}, log: [], epoch: 0, lastActive: 0 });
-function curWeek(p) { if (!p.start) return 1; return Math.min(WEEKS_N, Math.max(1, Math.floor((parse(today()) - parse(p.start)) / 864e5 / 7) + 1)); }
-function nextUnlock(p) { const d = parse(p.start || today()); d.setDate(d.getDate() + 7 * curWeek(p)); return d; }
+const blankProgress = () => ({ subs: [], start: null, profileAt: 0, done: {}, log: [], epoch: 0, lastActive: 0, ahead: 0 });
+function schoolHT() { const t = today(); let i = 0; HALF_TERMS.forEach((h, j) => { if (h.start <= t) i = j; }); return i; }
+function curHT(p) { return Math.min(HALF_TERMS.length - 1, schoolHT() + Math.max(0, +p.ahead || 0)); }
+function nextUnlockHT(p) { return HALF_TERMS[curHT(p) + 1] || null; }
 const testDays = (p) => new Set(p.log.map((l) => l.d));
 function streak(p) { const days = testDays(p); let n = 0; const d = new Date(); if (!days.has(dkey(d))) d.setDate(d.getDate() - 1); while (days.has(dkey(d))) { n++; d.setDate(d.getDate() - 1); } return n; }
 function bestStreak(p) { const days = [...testDays(p)].sort(); let best = 0, run = 0, prev = null; for (const k of days) { const t = parse(k); run = prev && (t - prev) / 864e5 < 1.5 ? run + 1 : 1; best = Math.max(best, run); prev = t; } return best; }
-function available(p) { const out = []; const cw = curWeek(p); for (let w = 0; w < cw; w++) for (const s of p.subs) if (SUB[s]) out.push({ s, w }); return out; }
+function available(p) {
+  // This half-term's guides first, then any earlier ones still to catch up on.
+  const cur = curHT(p), now = [], earlier = [];
+  for (const s of p.subs) { if (!SUB[s]) continue; SUB[s].weeks.forEach((_, w) => { const h = htOf(s, w); if (h === cur) now.push({ s, w }); else if (h < cur) earlier.push({ s, w, h }); }); }
+  earlier.sort((a, b) => a.h - b.h);
+  return now.concat(earlier);
+}
 const nextTopic = (p) => available(p).find((x) => !p.done[tkey(x.s, x.w)]) || null;
 function summary(p) {
   const subs = p.subs.filter((s) => SUB[s]);
@@ -56,7 +76,7 @@ function summary(p) {
     bonusN: mine.filter(([, r]) => r.b).length,
     avg: mine.length ? Math.round(mine.reduce((a, [, r]) => a + r.s / r.t, 0) / mine.length * 100) : null,
     active14: [...testDays(p)].filter((k) => k >= d14).length,
-    total: subs.length * WEEKS_N,
+    total: subs.reduce((a, s) => a + topicsIn(s), 0),
     quick: p.log.filter((l) => l.k === "daily"),
   };
 }
@@ -144,7 +164,7 @@ function scoresSVG(p) {
 }
 function daysHTML(p) { const days = testDays(p), out = []; const d = new Date(); d.setDate(d.getDate() - 13); for (let i = 0; i < 14; i++) { const k = dkey(d); out.push(`<div class="day${days.has(k) ? " on" : ""}${k === today() ? " today" : ""}" title="${d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}"></div>`); d.setDate(d.getDate() + 1); } return out.join(""); }
 function subjectBars(p) {
-  return p.subs.filter((s) => SUB[s]).map((s) => { const n = [0, 1, 2, 3].filter((w) => p.done[tkey(s, w)]).length; return `<div class="sbar"><span class="name">${esc(SUB[s].name)}</span><span class="track"><i style="width:${n / WEEKS_N * 100}%"></i></span><span class="n">${n}/${WEEKS_N}</span></div>`; }).join("") || `<p class="muted">No subjects chosen yet.</p>`;
+  return p.subs.filter((s) => SUB[s]).map((s) => { const T = topicsIn(s), n = SUB[s].weeks.filter((_, w) => p.done[tkey(s, w)]).length; return `<div class="sbar"><span class="name">${esc(SUB[s].name)}</span><span class="track"><i style="width:${n / T * 100}%"></i></span><span class="n">${n}/${T}</span></div>`; }).join("") || `<p class="muted">No subjects chosen yet.</p>`;
 }
 function chipsHTML(sel) {
   return `<div class="chips">${SUBJECTS.map((s) => `<label class="chip${sel.has(s.id) ? " on" : ""}" for="c-${s.id}"><input type="checkbox" id="c-${s.id}" value="${s.id}" ${sel.has(s.id) ? "checked" : ""}>${esc(s.name)}</label>`).join("")}</div>`;
@@ -282,10 +302,14 @@ const RENDER = {
 
   /* ----- student: home ----- */
   home() {
-    const p = state, cw = curWeek(p), nx = nextTopic(p), st = streak(p), didToday = testDays(p).has(today()), S = summary(p);
-    const weekList = []; for (let w = cw - 1; w >= 0; w--) weekList.push(`<div class="topics"><h3>${w === cw - 1 ? "This week" : "Week " + (w + 1)}</h3>${S.subs.map((s) => topicBtn(s, w, nx && nx.s === s && nx.w === w)).join("")}</div>`);
+    const p = state, cur = curHT(p), nx = nextTopic(p), st = streak(p), didToday = testDays(p).has(today()), S = summary(p);
+    const weekList = [];
+    for (let h = cur; h >= 0; h--) {
+      const items = []; for (const s of S.subs) SUB[s].weeks.forEach((_, w) => { if (htOf(s, w) === h) items.push(topicBtn(s, w, nx && nx.s === s && nx.w === w)); });
+      if (items.length) weekList.push(`<div class="topics"><h3>${h === cur ? "This half-term · " + HALF_TERMS[h].name : HALF_TERMS[h].name}</h3>${items.join("")}</div>`);
+    }
     app.innerHTML = `
-      <div class="row between"><div><div class="eyebrow">Week ${cw} of ${WEEKS_N}</div><h1>Hi ${esc(session.name)}</h1></div><button class="btn2" id="settings" type="button">My subjects</button></div>
+      <div class="row between"><div><div class="eyebrow">Whitmore Year 9 · ${HALF_TERMS[cur].name}</div><h1>Hi ${esc(session.name)}</h1></div><button class="btn2" id="settings" type="button">My subjects</button></div>
       ${store.get("asg-pending") ? `<p class="note warn">Saved on this device. It will sync when you're back online.</p>` : ""}
       <div class="stats">
         <div class="stat streak"><b>${st}</b><span>day streak</span></div>
@@ -307,14 +331,15 @@ const RENDER = {
       setSub(`<button class="link" id="daily" type="button">Short on time? Take a quick 5-question test</button>`, { daily: startDaily });
     } else {
       main.textContent = didToday ? "Take another quick test" : "Take today's quick test"; main.onclick = startDaily;
-      if (cw < WEEKS_N) setSub(`<span class="note">This week's guides are done. New guides on ${nextUnlock(p).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}.</span>`);
-      else setSub(`<span class="note">All weeks complete. Keep your streak with a daily quick test.</span>`);
+      const nu = nextUnlockHT(p);
+      if (nu) setSub(`<span class="note">This half-term's guides are done. ${nu.name} guides unlock on ${parse(nu.start).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}.</span>`);
+      else setSub(`<span class="note">All guides complete. Keep your streak with a daily quick test.</span>`);
     }
   },
 
   guide(v) {
     const S = SUB[v.s], T = S.weeks[v.w];
-    app.innerHTML = `<div class="row"><span class="subject">${esc(S.name)}</span><span class="eyebrow">Week ${v.w + 1} study guide</span></div>
+    app.innerHTML = `<div class="row"><span class="subject">${esc(S.name)}</span><span class="eyebrow">${htName(v.s, v.w)} study guide${S.board ? " · " + esc(S.board) : ""}</span></div>
       <h1>${esc(T.t)}</h1><p>${esc(T.intro)}</p>
       <div class="card"><h3>How it works</h3><ol class="list">${T.how.map((h) => `<li>${esc(h)}</li>`).join("")}</ol></div>
       <div class="example"><span class="eyebrow">Worked example</span><p class="q small">${esc(T.example.q)}</p><ol class="list">${T.example.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol><p class="ans">Answer: ${esc(T.example.a)}</p></div>`;
@@ -366,7 +391,7 @@ const RENDER = {
   result(v) {
     const pc = Math.round(v.score / v.t * 100), st = streak(state), S = summary(state);
     const msg = pc === 100 ? `Perfect score, ${esc(session.name)}!` : pc >= 80 ? "Great work!" : pc >= 50 ? "Good effort. Have another look at the guide." : "Keep going. Re-read the guide and try again.";
-    app.innerHTML = `<div class="eyebrow">${v.mode === "topic" ? esc(SUB[v.s].name) + " · Week " + (v.w + 1) + " complete" : "Quick test complete"}</div>
+    app.innerHTML = `<div class="eyebrow">${v.mode === "topic" ? esc(SUB[v.s].name) + " · " + htName(v.s, v.w) + " complete" : "Quick test complete"}</div>
       <div class="card"><div class="big">${v.score}/${v.t}</div><h2>${msg}</h2><p class="note">Time taken: ${fmtMin(v.m)} · Your parent can see this result.</p>
       ${v.mode === "topic" ? `<p>${v.bonus ? "★ You got the bonus question too. Your foundations are solid." : "You missed the bonus question. It checks an earlier skill this topic builds on, so it's worth a quick review."}</p>` : ""}</div>
       <div class="stats two"><div class="stat streak"><b>${st}</b><span>day streak${v.grew ? " — up by 1!" : ""}</span></div><div class="stat"><b>${S.mine.length}/${S.total}</b><span>topics done</span></div></div>`;
@@ -401,8 +426,8 @@ const RENDER = {
   pChild(v) {
     const c = family?.children.find((x) => x.id === v.id);
     if (!c) return go({ name: "pOverview" });
-    const p = c.state, S = summary(p), st = streak(p), cw = curWeek(p);
-    const rows = S.mine.slice().sort((a, b) => (b[1].d || "").localeCompare(a[1].d || "")).map(([k, r]) => { const [s, w] = k.split(":"); return `<tr><td>${esc(SUB[s].name)}<br><span class="note">Wk ${+w + 1} · ${esc(SUB[s].weeks[+w].t)}</span></td><td>${r.d ? niceDate(r.d) : "–"}</td><td class="num">${r.m ? fmtMin(r.m) : "–"}</td><td class="num">${r.s}/${r.t}${r.b ? " ★" : ""}</td></tr>`; }).join("");
+    const p = c.state, S = summary(p), st = streak(p), cur = curHT(p), nu = nextUnlockHT(p);
+    const rows = S.mine.slice().sort((a, b) => (b[1].d || "").localeCompare(a[1].d || "")).map(([k, r]) => { const [s, w] = k.split(":"); return `<tr><td>${esc(SUB[s].name)}<br><span class="note">${htName(s, +w)} · ${esc(SUB[s].weeks[+w].t)}</span></td><td>${r.d ? niceDate(r.d) : "–"}</td><td class="num">${r.m ? fmtMin(r.m) : "–"}</td><td class="num">${r.s}/${r.t}${r.b ? " ★" : ""}</td></tr>`; }).join("");
     app.innerHTML = `<div><div class="eyebrow">${ago(p.lastActive)}</div><h1>${esc(c.name)}</h1></div>
       <div class="stats">
         <div class="stat streak"><b>${st}</b><span>day streak · best ${bestStreak(p)}</span></div>
@@ -413,13 +438,14 @@ const RENDER = {
         <div class="stat"><b>${S.bonusN}/${S.mine.length}</b><span>bonus right</span></div>
       </div>
       ${S.weakest ? `<div class="card"><h3>At a glance</h3><p>Strongest: <b>${esc(SUB[S.strongest.s].name)}</b> (${S.strongest.avg}%). Needs most practice: <b>${esc(SUB[S.weakest.s].name)}</b> (${S.weakest.avg}%).</p></div>` : ""}
-      <div class="card"><div class="row between"><h3>Progress by subject</h3><span class="note">Week ${cw} of ${WEEKS_N}</span></div>${subjectBars(p)}</div>
+      <div class="card"><div class="row between"><h3>Progress by subject</h3><span class="note">${HALF_TERMS[cur].name}</span></div>${subjectBars(p)}</div>
       <div class="card"><h3>Last 10 tests</h3>${scoresSVG(p)}<h3>Last 14 days</h3><div class="days">${daysHTML(p)}</div><p class="note">${S.quick.length} quick daily test${S.quick.length === 1 ? "" : "s"} taken in total.</p></div>
       <div class="card"><h3>Every topic completed</h3>${rows ? `<div class="tablewrap"><table><thead><tr><th>Topic</th><th>Date</th><th class="num">Time</th><th class="num">Score</th></tr></thead><tbody>${rows}</tbody></table></div><p class="note">★ = bonus question right. Time runs from opening the guide to finishing the questions.</p>` : `<p class="muted">No topics finished yet.</p>`}</div>
+      ${+p.ahead ? `<p class="note">Unlocked ${+p.ahead} half-term${+p.ahead === 1 ? "" : "s"} early.</p>` : ""}
       <div class="card"><h3>Manage ${esc(c.name)}</h3>
         <div class="row">
           <button class="btn2" id="subs" type="button">Change subjects</button>
-          ${cw < WEEKS_N && p.start ? `<button class="btn2" id="unlock" type="button">Unlock week ${cw + 1} now</button>` : ""}
+          ${nu ? `<button class="btn2" id="unlock" type="button">Unlock ${nu.name} now</button>` : ""}
           <button class="btn2" id="newpin" type="button">Reset PIN</button>
           <button class="btn2" id="rename" type="button">Rename</button>
         </div>
@@ -474,7 +500,7 @@ const RENDER = {
 
 function topicBtn(s, w, isNext) {
   const r = state.done[tkey(s, w)], T = SUB[s].weeks[w];
-  return `<button class="tp${r ? " done" : ""}${isNext ? " next" : ""}" data-s="${s}" data-w="${w}" type="button"><span class="txt"><small>${esc(SUB[s].name)} · Week ${w + 1}</small><span class="t">${esc(T.t)}</span></span><span class="badge">${r ? `${r.s}/${r.t}${r.b ? " ★" : ""}` : isNext ? "Up next" : "To do"}</span></button>`;
+  return `<button class="tp${r ? " done" : ""}${isNext ? " next" : ""}" data-s="${s}" data-w="${w}" type="button"><span class="txt"><small>${esc(SUB[s].name)} · ${htName(s, w)}</small><span class="t">${esc(T.t)}</span></span><span class="badge">${r ? `${r.s}/${r.t}${r.b ? " ★" : ""}` : isNext ? "Up next" : "To do"}</span></button>`;
 }
 function openTopic(s, w) { startedAt = Date.now(); go({ name: "guide", s, w }); }
 function startDaily() {
