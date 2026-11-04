@@ -18,7 +18,7 @@ const cleanCode = (s) => String(s || "").trim().toLowerCase();
 async function hashPin(pin, salt) {
   const key = await crypto.subtle.importKey("raw", enc.encode(pin), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" }, key, 256);
+    { name: "PBKDF2", salt: enc.encode(salt), iterations: 1000, hash: "SHA-256" }, key, 256);
   return b64u(bits);
 }
 async function hmac(secret, msg) {
